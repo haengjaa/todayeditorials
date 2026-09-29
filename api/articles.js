@@ -3,32 +3,80 @@ export default async function handler(req, res) {
 
   try {
     const articles = [];
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    const today = new Date().toISOString().split('T')[0];
 
-    // 각 신문사의 사설 목록 페이지
+    // 신문사별 설정 (더 강화된 정규식)
     const papers = [
       {
         name: 'chosun',
         title: '조선일보',
         url: 'https://www.chosun.com/opinion/editorial/',
-        selector: 'editorial'
+        // 더 유연한 패턴: /opinion/editorial/년/월/일/ 형식의 모든 링크
+        linkPattern: /href="(https:\/\/www\.chosun\.com\/opinion\/editorial\/[^"]+)"/g,
+        titleExtractors: [
+          html => {
+            const match = html.match(/<h1[^>]*class="[^"]*headline[^"]*"[^>]*>([^<]+)<\/h1>/i);
+            return match ? match[1].trim() : null;
+          },
+          html => {
+            const match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+            return match ? match[1].trim() : null;
+          },
+          html => {
+            const match = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
+            return match ? match[1].trim() : null;
+          }
+        ]
       },
       {
         name: 'hani',
         title: '한겨레',
         url: 'https://www.hani.co.kr/arti/opinion/editorial',
-        selector: 'editorial'
+        linkPattern: /href="(https:\/\/www\.hani\.co\.kr\/arti\/opinion\/editorial\/\d+\.html)"/g,
+        titleExtractors: [
+          html => {
+            const match = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
+            return match ? match[1].trim() : null;
+          },
+          html => {
+            const match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+            return match ? match[1].trim() : null;
+          }
+        ]
       },
       {
         name: 'mk',
         title: '매일경제',
         url: 'https://www.mk.co.kr/opinion/editorial',
-        selector: 'editorial'
+        linkPattern: /href="(https:\/\/www\.mk\.co\.kr\/(?:news|opinion)\/editorial\/\d+)"/g,
+        titleExtractors: [
+          html => {
+            const match = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
+            return match ? match[1].trim() : null;
+          },
+          html => {
+            const match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+            return match ? match[1].trim() : null;
+          }
+        ]
       },
       {
         name: 'hankyung',
         title: '한국경제',
         url: 'https://www.hankyung.com/opinion/1158',
-        selector: 'article'
+        // 한국경제: 더 유연한 패턴
+        linkPattern: /href="(https:\/\/www\.hankyung\.com\/(?:article|news)\/\d+)"/g,
+        titleExtractors: [
+          html => {
+            const match = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
+            return match ? match[1].trim() : null;
+          },
+          html => {
+            const match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+            return match ? match[1].trim() : null;
+          }
+        ]
       }
     ];
 
@@ -39,13 +87,10 @@ export default async function handler(req, res) {
       hankyung: '한국경제'
     };
 
-    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-    const today = new Date().toISOString().split('T')[0];
-
-    // 각 신문사의 목록 페이지에서 기사 링크 추출
+    // 각 신문사 처리
     for (const paper of papers) {
-      console.log(`Processing ${paper.name}...`);
-      const articleLinks = [];
+      console.log(`[${paper.name}] Processing...`);
+      const articleLinks = new Set(); // 중복 제거
 
       try {
         const listResponse = await fetch(paper.url, {
@@ -53,75 +98,52 @@ export default async function handler(req, res) {
             'User-Agent': userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
-            'Referer': 'https://www.google.com/'
+            'Referer': 'https://www.google.com/',
+            'Cache-Control': 'no-cache'
           },
           timeout: 10000
         });
 
         if (!listResponse.ok) {
-          console.error(`Failed to fetch ${paper.name} list: ${listResponse.status}`);
+          console.error(`[${paper.name}] Failed to fetch list: HTTP ${listResponse.status}`);
           continue;
         }
 
         const html = await listResponse.text();
 
-        // 신문사별 기사 링크 추출 로직
-        if (paper.name === 'chosun') {
-          const linkRegex = /href="(https:\/\/www\.chosun\.com\/opinion\/editorial\/\d{4}\/\d{2}\/\d{2}\/[^"]+)"/g;
-          let match;
-          while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
-            const url = match[1];
-            if (!articleLinks.includes(url) && url.length < 200) {
-              articleLinks.push(url);
-            }
-          }
-        } else if (paper.name === 'hani') {
-          const linkRegex = /href="(https:\/\/www\.hani\.co\.kr\/arti\/opinion\/editorial\/\d+\.html)"/g;
-          let match;
-          while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
-            const url = match[1];
-            if (!articleLinks.includes(url)) {
-              articleLinks.push(url);
-            }
-          }
-        } else if (paper.name === 'mk') {
-          const linkRegex = /href="(https:\/\/www\.mk\.co\.kr\/(?:news|opinion)\/editorial\/\d+)"/g;
-          let match;
-          while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
-            const url = match[1];
-            if (!articleLinks.includes(url)) {
-              articleLinks.push(url);
-            }
-          }
-        } else if (paper.name === 'hankyung') {
-          const linkRegex = /href="(https:\/\/www\.hankyung\.com\/article\/\d+)"/g;
-          let match;
-          while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
-            const url = match[1];
-            if (!articleLinks.includes(url)) {
-              articleLinks.push(url);
-            }
+        // 기사 링크 추출 (최대 5개 추출 후 상위 3개 사용)
+        let match;
+        let extractedCount = 0;
+        while ((match = paper.linkPattern.exec(html)) && extractedCount < 5) {
+          let url = match[1];
+          // URL 정규화 (쿼리 파라미터 제거)
+          url = url.split('?')[0];
+          if (!articleLinks.has(url)) {
+            articleLinks.add(url);
+            extractedCount++;
           }
         }
 
-        console.log(`Found ${articleLinks.length} article links for ${paper.name}`);
+        const links = Array.from(articleLinks).slice(0, 3);
+        console.log(`[${paper.name}] Found ${links.length} article links`);
 
-        // 추출한 각 링크에서 제목과 내용 추출
-        for (let i = 0; i < articleLinks.length; i++) {
-          const articleUrl = articleLinks[i];
+        // 각 기사에서 제목 추출
+        for (let i = 0; i < links.length; i++) {
+          const articleUrl = links[i];
 
           try {
             const articleResponse = await fetch(articleUrl, {
               headers: {
                 'User-Agent': userAgent,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8'
+                'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+                'Referer': paper.url
               },
               timeout: 10000
             });
 
             if (!articleResponse.ok) {
-              console.error(`Failed to fetch article: ${articleUrl} (${articleResponse.status})`);
+              console.warn(`[${paper.name}] Failed to fetch article: HTTP ${articleResponse.status}`);
               continue;
             }
 
@@ -130,28 +152,28 @@ export default async function handler(req, res) {
             let title = '';
             let summary = '';
 
-            // 제목 추출
-            let titleMatch = articleHtml.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-            if (!titleMatch) titleMatch = articleHtml.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
-            if (!titleMatch) titleMatch = articleHtml.match(/<title>([^<]+)<\/title>/i);
-
-            if (titleMatch) {
-              title = titleMatch[1].trim();
-              title = title.replace(/[\|\-]\s*(조선일보|한겨레|매일경제|한국경제).*$/i, '').trim();
+            // 제목 추출 (여러 방법 시도)
+            for (const extractor of paper.titleExtractors) {
+              title = extractor(articleHtml);
+              if (title && title.length > 5) break;
             }
+
+            if (!title || title.length < 5) {
+              console.warn(`[${paper.name}] Could not extract title from ${articleUrl}`);
+              continue;
+            }
+
+            // 신문사명 제거
+            title = title
+              .replace(/[\|\-]\s*(조선일보|한겨레|매일경제|한국경제|뉴스).*$/i, '')
+              .replace(/\s*\|\s*오마이뉴스.*$/i, '')
+              .trim();
 
             // 요약 추출
-            let summaryMatch = articleHtml.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
-            if (!summaryMatch) summaryMatch = articleHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
-
+            const summaryMatch = articleHtml.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i) ||
+                                articleHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
             if (summaryMatch) {
               summary = summaryMatch[1].trim().substring(0, 150);
-            }
-
-            // 제목이 없으면 스킵
-            if (!title || title.length < 5) {
-              console.error(`Invalid title for ${articleUrl}: "${title}"`);
-              continue;
             }
 
             articles.push({
@@ -164,19 +186,25 @@ export default async function handler(req, res) {
               u: articleUrl
             });
 
-            console.log(`✓ Extracted: ${title}`);
+            console.log(`[${paper.name}] ✓ ${title}`);
 
           } catch (articleError) {
-            console.error(`Error processing ${articleUrl}:`, articleError.message);
+            console.error(`[${paper.name}] Error fetching ${articleUrl}:`, articleError.message);
           }
+
+          // 요청 간 딜레이 (웹사이트 서버 부담 줄이기)
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
 
       } catch (error) {
-        console.error(`Error processing ${paper.name}:`, error.message);
+        console.error(`[${paper.name}] Error:`, error.message);
       }
+
+      // 신문사 간 딜레이
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    console.log(`Total articles extracted: ${articles.length}`);
+    console.log(`=== Total: ${articles.length} articles extracted ===`);
 
     return res.status(200).json({
       articles: articles,
