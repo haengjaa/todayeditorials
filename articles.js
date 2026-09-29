@@ -1,4 +1,6 @@
 export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+
   try {
     const articles = [];
 
@@ -7,22 +9,26 @@ export default async function handler(req, res) {
       {
         name: 'chosun',
         title: '조선일보',
-        url: 'https://www.chosun.com/opinion/editorial/'
+        url: 'https://www.chosun.com/opinion/editorial/',
+        selector: 'editorial'
       },
       {
         name: 'hani',
         title: '한겨레',
-        url: 'https://www.hani.co.kr/arti/opinion/editorial'
+        url: 'https://www.hani.co.kr/arti/opinion/editorial',
+        selector: 'editorial'
       },
       {
         name: 'mk',
         title: '매일경제',
-        url: 'https://www.mk.co.kr/opinion/editorial'
+        url: 'https://www.mk.co.kr/opinion/editorial',
+        selector: 'editorial'
       },
       {
         name: 'hankyung',
         title: '한국경제',
-        url: 'https://www.hankyung.com/opinion/1158'
+        url: 'https://www.hankyung.com/opinion/1158',
+        selector: 'article'
       }
     ];
 
@@ -33,15 +39,23 @@ export default async function handler(req, res) {
       hankyung: '한국경제'
     };
 
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    const today = new Date().toISOString().split('T')[0];
+
     // 각 신문사의 목록 페이지에서 기사 링크 추출
     for (const paper of papers) {
+      console.log(`Processing ${paper.name}...`);
       const articleLinks = [];
 
       try {
         const listResponse = await fetch(paper.url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+            'Referer': 'https://www.google.com/'
+          },
+          timeout: 10000
         });
 
         if (!listResponse.ok) {
@@ -53,17 +67,17 @@ export default async function handler(req, res) {
 
         // 신문사별 기사 링크 추출 로직
         if (paper.name === 'chosun') {
-          // 조선일보: /opinion/editorial/ 경로의 링크 추출
+          // 조선일보: /opinion/editorial/YYYY/MM/DD/ 형식
           const linkRegex = /href="(https:\/\/www\.chosun\.com\/opinion\/editorial\/\d{4}\/\d{2}\/\d{2}\/[^"]+)"/g;
           let match;
           while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
             const url = match[1];
-            if (!articleLinks.includes(url)) {
+            if (!articleLinks.includes(url) && url.length < 200) {
               articleLinks.push(url);
             }
           }
         } else if (paper.name === 'hani') {
-          // 한겨레: /arti/opinion/editorial/ 경로의 링크 추출
+          // 한겨레: /arti/opinion/editorial/XXXXXX.html
           const linkRegex = /href="(https:\/\/www\.hani\.co\.kr\/arti\/opinion\/editorial\/\d+\.html)"/g;
           let match;
           while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
@@ -73,7 +87,7 @@ export default async function handler(req, res) {
             }
           }
         } else if (paper.name === 'mk') {
-          // 매일경제: /news/editorial/ 또는 /opinion/editorial/ 경로의 링크 추출
+          // 매일경제: /news/editorial/ 형식
           const linkRegex = /href="(https:\/\/www\.mk\.co\.kr\/(?:news|opinion)\/editorial\/\d+)"/g;
           let match;
           while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
@@ -83,7 +97,7 @@ export default async function handler(req, res) {
             }
           }
         } else if (paper.name === 'hankyung') {
-          // 한국경제: /article/ 경로의 링크 추출
+          // 한국경제: /article/XXXXXXX
           const linkRegex = /href="(https:\/\/www\.hankyung\.com\/article\/\d+)"/g;
           let match;
           while ((match = linkRegex.exec(html)) && articleLinks.length < 3) {
@@ -94,7 +108,7 @@ export default async function handler(req, res) {
           }
         }
 
-        console.log(`Found ${articleLinks.length} articles for ${paper.name}`);
+        console.log(`Found ${articleLinks.length} article links for ${paper.name}`);
 
         // 추출한 각 링크에서 제목과 내용 추출
         for (let i = 0; i < articleLinks.length; i++) {
@@ -103,12 +117,15 @@ export default async function handler(req, res) {
           try {
             const articleResponse = await fetch(articleUrl, {
               headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-              }
+                'User-Agent': userAgent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8'
+              },
+              timeout: 10000
             });
 
             if (!articleResponse.ok) {
-              console.error(`Failed to fetch article: ${articleUrl}`);
+              console.error(`Failed to fetch article: ${articleUrl} (${articleResponse.status})`);
               continue;
             }
 
@@ -117,7 +134,7 @@ export default async function handler(req, res) {
             let title = '';
             let summary = '';
 
-            // 제목 추출 (여러 방법 시도)
+            // 제목 추출
             let titleMatch = articleHtml.match(/<h1[^>]*>([^<]+)<\/h1>/i);
             if (!titleMatch) titleMatch = articleHtml.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
             if (!titleMatch) titleMatch = articleHtml.match(/<title>([^<]+)<\/title>/i);
@@ -133,55 +150,52 @@ export default async function handler(req, res) {
             if (!summaryMatch) summaryMatch = articleHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
 
             if (summaryMatch) {
-              summary = summaryMatch[1].trim().substring(0, 100);
+              summary = summaryMatch[1].trim().substring(0, 150);
             }
 
             // 제목이 없으면 스킵
-            if (!title || title.length < 5) continue;
+            if (!title || title.length < 5) {
+              console.error(`Invalid title for ${articleUrl}: "${title}"`);
+              continue;
+            }
 
             articles.push({
-              id: `${paper.name}-${new Date().toISOString().split('T')[0]}-${i}`,
+              id: `${paper.name}-${today}-${i}`,
               p: paper.name,
-              d: new Date().toISOString().split('T')[0],
+              d: today,
               t: title,
               y: '사설',
-              s: summary || title.substring(0, 100),
+              s: summary || title.substring(0, 150),
               u: articleUrl
             });
 
+            console.log(`✓ Extracted: ${title}`);
+
           } catch (articleError) {
-            console.error(`Failed to extract content from ${articleUrl}:`, articleError.message);
+            console.error(`Error processing ${articleUrl}:`, articleError.message);
           }
         }
 
       } catch (error) {
-        console.error(`Failed to process ${paper.name}:`, error.message);
+        console.error(`Error processing ${paper.name}:`, error.message);
       }
     }
 
-    // 데이터가 없으면 안내 메시지 반환
-    if (articles.length === 0) {
-      articles.push({
-        id: 'no-data-1',
-        p: 'chosun',
-        d: new Date().toISOString().split('T')[0],
-        t: '사설을 로드할 수 없습니다',
-        y: '안내',
-        s: '잠시 후 다시 시도해주세요. 신문사 페이지 구조가 변경되었을 수 있습니다.',
-        u: 'https://www.chosun.com'
-      });
-    }
+    console.log(`Total articles extracted: ${articles.length}`);
 
-    res.setHeader('Content-Type', 'application/json');
-    res.status(200).json({
-      articles: articles
+    // 데이터가 없으면 빈 배열 반환 (프론트에서 처리)
+    return res.status(200).json({
+      articles: articles,
+      timestamp: new Date().toISOString(),
+      total: articles.length
     });
 
   } catch (error) {
-    console.error('Main error:', error);
-    res.status(500).json({
+    console.error('Fatal error:', error);
+    return res.status(200).json({
+      articles: [],
       error: error.message,
-      articles: []
+      timestamp: new Date().toISOString()
     });
   }
 }
