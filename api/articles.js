@@ -40,8 +40,8 @@ export default async function handler(req, res) {
         type: 'fixed',
         articles: [
           'https://www.hankyung.com/article/2026092928751',
-          'https://www.hankyung.com/article/2026092928501',
-          'https://www.hankyung.com/article/2026092928491'
+          'https://www.hankyung.com/article/2026092801501',
+          'https://www.hankyung.com/article/2026092801521'
         ]
       }
     ];
